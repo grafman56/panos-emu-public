@@ -1,0 +1,38 @@
+{
+  "system": {
+    "hostname": "pa-lab-01",
+    "serial": "007000000001",
+    "model": "PA-VM",
+    "sw-version": "11.1.0",
+    "app-version": "8890-9000",
+    "threat-version": "9000-9100"
+  },
+  "ha": {
+    "local-state": "active",
+    "peer-state": "passive",
+    "ha1": "up",
+    "ha2": "up",
+    "running-sync": "synchronized"
+  },
+  "interfaces": {
+    "ethernet1/1": {"state": "up", "zone": "trust", "link": "spine1"},
+    "ethernet1/2": {"state": "up", "zone": "untrust", "link": "spine2"}
+  },
+  "virtual-routers": {"default": {"routes": [{"destination": "0.0.0.0/0", "next-hop": "172.100.112.1", "type": "static"}]}},
+  "addresses": [],
+  "services": [],
+  "nat-rules": [],
+  "licenses": {"threat-prevention": {"status": "active", "days-remaining": 365}, "wildfire": {"status": "active", "days-remaining": 365}},
+  "vpn": [],
+  "sessions": {"active": 128, "maximum": 10000, "utilization": 1.28},
+  "logs": [],
+  "user-id": [],
+  "running_config": {
+    "zones": ["trust", "untrust", "dmz"],
+    "security-rules": [
+      {"name": "allow-web", "source": "trust", "destination": "untrust", "application": "ssl", "service": "application-default", "action": "allow"}
+    ]
+  },
+  "candidate_changes": [],
+  "commit": {"result": "OK"}
+}

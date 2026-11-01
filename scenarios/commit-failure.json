@@ -1,0 +1,6 @@
+{
+  "system": {"hostname": "pa-lab-01", "serial": "007000000001", "model": "PA-VM", "sw-version": "11.1.0", "app-version": "8890-9000", "threat-version": "9000-9100"},
+  "ha": {"local-state": "active", "peer-state": "passive", "ha1": "up", "ha2": "up", "running-sync": "synchronized"},
+  "vpn": [], "sessions": {"active": 128, "maximum": 10000, "utilization": 1.28},
+  "logs": [{"severity": "error", "type": "config", "message": "Commit failed: referenced object does not exist"}], "user-id": [], "running_config": {"zones": ["trust", "untrust"], "security-rules": []}, "candidate_changes": [{"action": "set", "xpath": "invalid"}], "commit": {"result": "FAIL"}
+}

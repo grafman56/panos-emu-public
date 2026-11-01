@@ -1,0 +1,11 @@
+# Development dependencies: the tests only.
+#
+#   python3 -m pip install -r requirements-dev.txt
+#   python3 -m pytest tests/ -q
+#
+# The emulator itself needs nothing beyond the Python standard library, so the
+# container image is unchanged by this file.
+pytest==8.3.4
+# Optional: one contract test reads the configuration through the real PAN-OS
+# client and skips when this package is absent.
+pan-python==0.17.0

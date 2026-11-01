@@ -1,0 +1,14 @@
+name: panos-lab
+
+topology:
+  nodes:
+    panos:
+      kind: linux
+      image: panos-emulator:latest
+      ports:
+        - "8080:8080" # browser/dashboard access from the host
+    client:
+      kind: linux
+      image: alpine:3.20
+  links:
+    - endpoints: [client:eth1, panos:eth1]

@@ -1,0 +1,6 @@
+services:
+  panos-emulator:
+    build: .
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
