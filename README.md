@@ -228,6 +228,13 @@ healthy  ha-out-of-sync  tunnel-down  license-expiring  high-sessions  commit-fa
 Add a file to `scenarios/` to create another condition. Point `PANOS_DATA` at a
 different fixture to change the starting state.
 
+## Use it with the campus lab
+
+The [two-site campus lab](https://github.com/grafman56/containerlab-labs-public/tree/main/evpn-vxlan-campus)
+publishes users and role tags to this emulator and checks them. Start the
+emulator with `python3 panos_emulator.py`, then follow the campus README. Its
+demo script expects the emulator on `127.0.0.1:8080`.
+
 ## Tests
 
 ```sh
