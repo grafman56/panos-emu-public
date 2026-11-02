@@ -1,13 +1,244 @@
 # PAN-OS Lab Emulator
 
-Small, fake, data-driven PAN-OS management endpoint for Containerlab training. It does not forward packets and is not a firewall.
+A small fake PAN-OS management endpoint for Containerlab exercises. It answers
+the XML API the way a firewall does, so an automation script, a client library
+or an Ansible playbook can be tested without a firewall.
 
-## Run locally
+It does not forward packets, and it has no dataplane or App-ID. It answers
+management requests and keeps state.
+
+## What you can practise with it
+
+- Read configuration and operational state with the PAN-OS XML API
+- Change candidate configuration, commit it, and poll the job
+- Test a security rule against the candidate, with and without a User-ID mapping
+- Publish IP-to-user mappings and tags, then check that a rule matches on them
+- Switch the device to a failure condition and watch a script react
+
+## Requirements
+
+- Python 3.12, the version in the Docker image. Older 3.x probably works and is
+  untested.
+- Docker, if you want to run it as a container
+- Nothing else. The emulator uses the standard library only.
+
+## Run it
 
 ```sh
 python3 panos_emulator.py
-curl 'http://127.0.0.1:8080/api?type=op&cmd=%3Cshow%3E%3Csystem%3E%3Cinfo%3E%3C%2Finfo%3E%3C%2Fsystem%3E%3C%2Fshow%3E'
 ```
+
+It prints one line and keeps running:
+
+```text
+PAN-OS lab emulator listening on 0.0.0.0:8080 (vsys: vsys1)
+```
+
+In a second terminal, ask for the software version:
+
+```sh
+curl -s 'http://127.0.0.1:8080/api?type=version'
+```
+
+```xml
+<response status="success" code="19"><result><version>11.1.0</version></result></response>
+```
+
+The management API answers on `/api`. A health check for containers answers on
+`/health`:
+
+```sh
+curl -s http://127.0.0.1:8080/health
+```
+
+```xml
+<response status="success" code="19"><result><status>up</status></result></response>
+```
+
+Open `http://127.0.0.1:8080/` in a browser for a live status page. It shows the
+version, hostname and HA state, buttons that query interfaces, routes, VPN,
+sessions, licences and system, a Show config and Commit button, a policy match
+form, and one button per scenario.
+
+### Settings
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PANOS_PORT` | `8080` | Listen port |
+| `PANOS_HOST` | `0.0.0.0` | Listen address |
+| `PANOS_DATA` | `data/default.json` | Initial device state |
+| `PANOS_VSYS` | `vsys1` | Comma separated vsys list, for a second tenant |
+| `PANOS_API_KEY` | empty | Set it to require the `X-PAN-KEY` header |
+
+Authentication is off by default, so a lab needs no keys.
+
+## Read configuration and state
+
+`action=show` returns the running configuration. `action=get` returns the
+candidate. Both take an `xpath`, which selects a subtree:
+
+```sh
+curl -s -G http://127.0.0.1:8080/api \
+  --data-urlencode 'type=config' --data-urlencode 'action=show' \
+  --data-urlencode "xpath=/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='vsys1']/rulebase/security/rules"
+```
+
+```xml
+<response status="success" code="19"><result><rules><entry name="allow-dns"><source><member>trust</member></source><destination><member>untrust</member></destination><application><member>dns</member></application><action>allow</action></entry></rules></result></response>
+```
+
+Leave the `xpath` out to read the whole configuration. A path outside `/config`
+is error 6. A path under `/config` that holds nothing returns success with an
+empty node.
+
+Operational reads are keyed, so a parser can find entries by name:
+
+| Query | Shape |
+|---|---|
+| `show interface` | `<interfaces><entry name="ethernet1/1"><state/><zone/><link/></entry></interfaces>` |
+| `show routing route` | `<virtual-router><entry name="default"><routing-table><entry><destination/><nexthop/></entry></routing-table></entry></virtual-router>` |
+| `show license` | `<licenses><entry name="threat-prevention"><status/><days-remaining/></entry></licenses>` |
+| `show session` | `<session><active/><maximum/><utilization/></session>` |
+| `show system info` | `<system><hostname/><serial/><sw-version/></system>` |
+| `show routing protocol bgp` | `<bgp/>`, empty: this lab configures no BGP |
+| `test security-policy-match` | `<rules><entry name="allow-dns"><action/><reason/></entry></rules>` |
+
+## Change configuration, then commit
+
+Configuration changes go to the candidate. Commit copies the candidate to the
+running configuration. The only mutable object in this lab is the security
+rulebase.
+
+Add a rule:
+
+```sh
+curl -s -X POST \
+  --data-urlencode 'type=config' --data-urlencode 'action=set' \
+  --data-urlencode "xpath=security/rules/entry[@name='allow-dns']" \
+  --data-urlencode 'element=<entry><source>trust</source><destination>untrust</destination><application>dns</application><action>allow</action></entry>' \
+  http://127.0.0.1:8080/api
+```
+
+```xml
+<response status="success" code="19"><result><msg>configuration updated</msg></result></response>
+```
+
+Test a rule before you commit it. Matching reads the candidate:
+
+```sh
+curl -s -G http://127.0.0.1:8080/api \
+  --data-urlencode 'type=op' --data-urlencode 'from=trust' \
+  --data-urlencode 'to=untrust' --data-urlencode 'application=dns'
+```
+
+```xml
+<response status="success" code="19"><result><rules><entry name="allow-dns"><action>allow</action><reason>first matching rule</reason></entry></rules></result></response>
+```
+
+A rule that keys on a user or a tag returns `interzone-default` until User-ID
+knows who is at the source address. See the next section.
+
+Commit, then poll the job:
+
+```sh
+curl -s -X POST --data-urlencode 'type=commit' http://127.0.0.1:8080/api
+curl -s -G http://127.0.0.1:8080/api \
+  --data-urlencode 'type=op' --data-urlencode 'cmd=<show><jobs><id>1</id></jobs></show>'
+```
+
+```xml
+<response status="success" code="19"><result><job><status>FIN</status><result>OK</result></job></result></response>
+```
+
+The job finishes about a quarter of a second after the commit, so a poll loop
+sees `ACT` at least once.
+
+## User-ID
+
+A firewall can learn which user holds which address. The emulator holds two
+tables for that: IP-to-user mappings, and tags on an address or on a user. A
+security rule can match on `source-user` or `source-tag`.
+
+Publish one mapping:
+
+```sh
+curl -s -X POST http://127.0.0.1:8080/api \
+  --data-urlencode 'type=user-id' \
+  --data-urlencode 'cmd=<uid-message><version>1.0</version><type>update</type><payload><login><entry name="jsmith@campus.edu" ip="10.10.10.100"/></login></payload></uid-message>'
+```
+
+```xml
+<response status="success" code="19"><result><msg>User-ID update applied to vsys1</msg></result></response>
+```
+
+Read it back:
+
+```sh
+curl -s -G http://127.0.0.1:8080/api \
+  --data-urlencode 'type=op' \
+  --data-urlencode 'cmd=<show><user><ip-user-mapping><all/></ip-user-mapping></user></show>'
+```
+
+```xml
+<response status="success" code="19"><result><entry><ip>10.10.10.100</ip><vsys>vsys1</vsys><type>XMLAPI</type><user>jsmith@campus.edu</user><idle_timeout>2699</idle_timeout><timeout>2700</timeout></entry><count>1</count></result></response>
+```
+
+The payload types are `login`, `logout`, `register`, `unregister`,
+`register-user`, `unregister-user` and `clear`. A login times out after 45
+minutes by default. A timeout of `0` means never, and that is the default for a
+tag. A tag timeout cannot exceed 30 days.
+
+Mappings are per vsys, as on a real firewall. Two tenants can hold the same
+address, and a policy check in one vsys does not see the other. Pass `vsys=` on
+any User-ID or policy request; the default is `vsys1`.
+
+```sh
+# start with a second tenant
+PANOS_VSYS=vsys1,vsys2 python3 panos_emulator.py
+
+# read the table that belongs to vsys2
+curl -s -G http://127.0.0.1:8080/api \
+  --data-urlencode 'type=op' --data-urlencode 'vsys=vsys2' \
+  --data-urlencode 'cmd=<show><user><ip-user-mapping><all/></ip-user-mapping></user></show>'
+```
+
+An unknown vsys is error 18. User tags are per vsys too, so a tag registered for
+a user in one vsys does not apply to that user in another.
+
+`TRAINING.md` has the exercises. It also lists what to re-check on a real
+firewall, because some of this is lab behaviour, not documented PAN-OS
+behaviour.
+
+## Change the device condition
+
+A scenario is one JSON file under `scenarios/`. It changes the condition, so
+interfaces and routes stay as they were, and published User-ID mappings and tags
+stay too. Configuration does not: the scenario brings its own running
+configuration, and any uncommitted candidate changes are dropped.
+
+```sh
+curl -s -X POST http://127.0.0.1:8080/scenario/ha-out-of-sync
+curl -s -X POST http://127.0.0.1:8080/scenario/healthy   # back to normal
+```
+
+```text
+healthy  ha-out-of-sync  tunnel-down  license-expiring  high-sessions  commit-failure
+```
+
+Add a file to `scenarios/` to create another condition. Point `PANOS_DATA` at a
+different fixture to change the starting state.
+
+## Tests
+
+```sh
+python3 -m pip install -r requirements-dev.txt
+python3 -m pytest tests/ -q
+```
+
+`requirements-dev.txt` installs `pytest` and `pan-python`. Only `pytest` is
+needed to run the suite. One test in `tests/test_xml_contract.py` reads the
+configuration through `pan-python` and skips when the package is missing, so
+install both to run every check.
 
 ## Run with Docker
 
@@ -16,128 +247,38 @@ docker build -t panos-emulator .
 docker run --rm -p 8080:8080 panos-emulator
 ```
 
-Or use Docker Compose:
+Or with Compose:
 
 ```sh
 docker compose up --build -d
+docker compose down
 ```
 
-Open `http://127.0.0.1:8080/` for the browser landing page. Authentication is off by default for easy lab use. Set `PANOS_API_KEY` to require the `X-PAN-KEY` header when testing authenticated clients.
+The image has a health check on `/health`.
 
-## User-ID
+## Run in Containerlab
 
-The emulator holds IP-to-user mappings and IP tags (`type=user-id` with `<uid-message>`, `show user ip-user-mapping`, `show object registered-ip`). Rules can match on `source-user` and `source-tag`. See `TRAINING.md`, which also lists what to re-verify on a real firewall.
-
-Mappings are per vsys, as on a real firewall. Two tenants can hold the same address, and a policy check in one vsys does not see the other. Pass the vsys as a query parameter; the default is `vsys1`.
+`containerlab.yml` deploys one `panos` node and one Alpine client on a link:
 
 ```sh
-# a second tenant vsys exists in this process
-PANOS_VSYS=vsys1,vsys2 python3 panos_emulator.py
-
-curl -G http://127.0.0.1:8080/api \
-  --data-urlencode 'type=op' --data-urlencode 'vsys=vsys2' \
-  --data-urlencode 'cmd=<show><user><ip-user-mapping><all/></ip-user-mapping></user></show>'
-```
-
-An unknown vsys is error 18 on write and on read. User tags are per vsys too: a tag set on a user in `vsys2` does not apply to that user in `vsys1`.
-
-## Change a scenario
-
-```sh
-curl -X POST http://127.0.0.1:8080/scenario/ha-out-of-sync
-curl -X POST http://127.0.0.1:8080/scenario/healthy
-```
-
-Add a JSON file under `scenarios/` to create another deterministic device condition.
-
-## Candidate configuration and policy matching
-
-Configuration changes stay in candidate state until commit. The small supported training subset is security rules.
-
-Configuration reads follow PAN-OS: `action=show` returns the running configuration, `action=get` returns the candidate. Both accept an `xpath` under `/config` and return the subtree in the real device shape, so a client library can walk it:
-
-```sh
-# the whole running configuration
-curl 'http://127.0.0.1:8080/api?type=config&action=show'
-
-# just the security rulebase
-curl -G http://127.0.0.1:8080/api \
-  --data-urlencode 'type=config' --data-urlencode 'action=show' \
-  --data-urlencode "xpath=/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='vsys1']/rulebase/security/rules"
-
-# the candidate rulebase, before commit
-curl -G http://127.0.0.1:8080/api \
-  --data-urlencode 'type=config' --data-urlencode 'action=get' \
-  --data-urlencode "xpath=/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='vsys1']/rulebase/security/rules"
-```
-
-A path outside `/config` returns error 6. A path under `/config` that holds nothing returns success with an empty node.
-
-Write a rule with the short XPath used by the exercises, or with the full path a client sends:
-
-```sh
-curl -X POST \
-  --data-urlencode 'type=config' --data-urlencode 'action=set' \
-  --data-urlencode "xpath=security/rules/entry[@name='allow-dns']" \
-  --data-urlencode 'element=<entry><source>trust</source><destination>untrust</destination><application>dns</application><action>allow</action></entry>' \
-  http://127.0.0.1:8080/api
-```
-
-Use `type=config&action=validate`, then `type=commit`, and poll the returned job ID. Job status is nested the way a client expects:
-
-```xml
-<result><job><status>FIN</status><result>OK</result></job></result>
-```
-
-Policy match works two ways: a `<test><security-policy-match>` XML command, or bare query params:
-
-```sh
-curl 'http://127.0.0.1:8080/api?type=op&from=trust&to=untrust&application=dns'
-```
-
-Matching is against the **candidate** config, so you can test a rule before committing it.
-Only security rules are mutable in this lab; other xpaths return error 6.
-
-Scenarios are JSON files. Add one without changing Python code. Set `PANOS_DATA` to use a different initial fixture. Set `PANOS_API_KEY` only when you want to test authentication.
-
-## Training loop
-
-1. Query operational state.
-2. Change candidate configuration with `type=config`.
-3. Commit and capture the returned job ID.
-4. Poll `type=op` until the job is `FIN`.
-5. Switch to a failure scenario and investigate the changed device state.
-
-See [TRAINING.md](TRAINING.md) for exercises.
-
-The XML API response shape follows PAN-OS concepts: status, numeric code, result, candidate changes, commits, and asynchronous jobs. It is intentionally incomplete. Add an endpoint only when a training exercise needs it.
-
-Operational reads are keyed, not flat, so a parser can use them:
-
-| Query | Shape |
-|---|---|
-| `show interface` | `<interfaces><entry name="ethernet1/1"><state/><zone/><link/></entry>` |
-| `show routing route` | `<virtual-router><entry name="default"><routing-table><entry><destination/><nexthop/></entry>` |
-| `show license` | `<licenses><entry name="threat-prevention"><status/><days-remaining/>` |
-| `show session` | `<session><active/><maximum/><utilization/>` |
-| `show system info` | `<system><hostname/><serial/><sw-version/>` |
-| `show routing protocol bgp` | `<bgp/>`, empty: no BGP is configured in this lab |
-| `test security-policy-match` | `<rules><entry name="allow-web"><action/><reason/>` |
-
-## Tests
-
-`pytest` is the only development dependency:
-
-```sh
-python3 -m pip install -r requirements-dev.txt
-python3 -m pytest tests/ -q
-```
-
-`tests/test_xml_contract.py` holds the shape a client library expects. One test in it reads the configuration through `pan-python` and skips when that package is absent. Install it on a host with network access to run that check.
-
-## Containerlab
-
-```sh
-docker build -t panos-emulator .
+docker build -t panos-emulator:latest .
 containerlab deploy -t containerlab.yml
+docker exec -it clab-panos-lab-client sh   # then: wget -qO- http://panos:8080/health
+containerlab destroy -t containerlab.yml
 ```
+
+The `panos` node publishes port 8080 on the host, so the API and the browser page
+stay reachable from outside the lab. Stop any local emulator first, or the
+deploy fails because the port is taken.
+
+## Files
+
+| File | Contents |
+|---|---|
+| `panos_emulator.py` | The whole server |
+| `data/default.json` | Starting device state |
+| `scenarios/*.json` | Device conditions you can switch to |
+| `ARCHITECTURE.md` | How state and responses are built |
+| `TRAINING.md` | Exercises and the fidelity notes |
+
+`ARCHITECTURE.md` and `TRAINING.md` define what the emulator does.

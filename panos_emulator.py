@@ -25,6 +25,25 @@ def load(path):
         return json.load(f)
 
 
+def switch_scenario(path):
+    """Apply one scenario file to the device state.
+
+    A scenario names what changes, such as HA state or a licence date. Merge it
+    over the base fixture so interfaces, routes and configuration stay as they
+    were. Replacing the whole state made every scenario look like a wiped
+    device. The vsys list and the User-ID tables survive too. Configuration does
+    not: each scenario carries its own running configuration."""
+    # Process settings and live User-ID tables outlive a change of condition:
+    # a published login is not part of "the HA pair went out of sync".
+    keep = {k: state[k] for k in ("vsys", "userid_logins", "userid_tags", "userid_user_tags") if k in state}
+    merged = load(DATA)
+    merged.update(load(path))
+    merged.update(keep)
+    state.clear()
+    state.update(merged)
+    jobs.clear()
+
+
 state = load(DATA)
 state.setdefault("candidate_config", deepcopy(state.get("running_config", {})))
 jobs = {}
@@ -660,9 +679,7 @@ document.querySelector('#scenarios').innerHTML=['healthy','ha-out-of-sync','tunn
                 self.send_xml(error(7, "scenario not found"), 404)
                 return
             with LOCK:
-                state.clear()
-                state.update(load(path))
-                jobs.clear()
+                switch_scenario(path)
             self.send_xml(xml_response({"scenario": name}))
             return
         if parsed.path.startswith("/api"):

@@ -40,3 +40,38 @@ def test_failed_commit_keeps_candidate_change():
     assert emulator.current_config() == before
     time.sleep(emulator.JOB_COMPLETE_AFTER + 0.1)
     assert emulator.job_result(job).find(b"FAIL") >= 0
+
+
+def test_a_scenario_changes_only_what_it_names():
+    """Switching to a failure scenario must not wipe interfaces or routes.
+
+    The scenario files carry the device condition, not the whole device. If the
+    switch replaced all state, every exercise started on a device with no
+    interfaces and an empty routing table.
+    """
+    saved = emulator.state.copy()
+    emulator.state.clear()
+    emulator.state.update(emulator.load(emulator.DATA))
+    try:
+        emulator.switch_scenario(emulator.SCENARIOS / "ha-out-of-sync.json")
+        assert "ethernet1/1" in emulator.state["interfaces"]
+        assert emulator.state["virtual-routers"]["default"]["routes"]
+        assert emulator.state["ha"]["running-sync"] == "out-of-sync"
+    finally:
+        emulator.state.clear()
+        emulator.state.update(saved)
+
+
+def test_a_scenario_keeps_published_user_id():
+    saved = emulator.state.copy()
+    emulator.state.clear()
+    emulator.state.update(emulator.load(emulator.DATA))
+    try:
+        emulator.state["vsys"] = ["vsys1", "vsys2"]
+        emulator.userid_tables("vsys2")[0]["10.0.0.1"] = {"user": "a@x", "timeout": 0, "created": 0, "expires": 0}
+        emulator.switch_scenario(emulator.SCENARIOS / "tunnel-down.json")
+        assert emulator.state["vsys"] == ["vsys1", "vsys2"]
+        assert "10.0.0.1" in emulator.userid_tables("vsys2")[0]
+    finally:
+        emulator.state.clear()
+        emulator.state.update(saved)
