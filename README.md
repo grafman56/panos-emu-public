@@ -7,6 +7,19 @@ or an Ansible playbook can be tested without a firewall.
 It does not forward packets, and it has no dataplane or App-ID. It answers
 management requests and keeps state.
 
+## The words used here
+
+If you are new to firewalls, these five are enough to follow this guide.
+
+- **Zone**: a named group of firewall ports, such as `tenant` or `guest`. Rules say which zone may talk to which.
+- **Security rule**: allow or deny traffic from one zone to another.
+- **User-ID**: the firewall's table of which user is at which IP address. A rule can match the user instead of the address.
+- **Tag**: a label on an IP address, such as `vni:1010`. A rule can match a tag.
+- **Candidate and commit**: a change goes into a draft copy first. Commit makes the draft live.
+
+Where to start: run it ([Run it](#run-it)), then try [Use it with a lab](#use-it-with-a-lab)
+if you have a Containerlab topology, or the exercises in `TRAINING.md` if you do not.
+
 ## What you can practise with it
 
 - Read configuration and operational state with the PAN-OS XML API
@@ -269,7 +282,7 @@ What you need:
 
 - The `docker` command, and permission to use it, on the machine that runs the emulator.
 - A node that runs FRR and keeps its zones in an nftables table named `zones`, with one
-  set per zone called `<zone>_ifaces`. The campus lab firewalls do.
+  set per zone called `<zone>_ifaces`. The firewalls in the campus lab and the SR Linux lab do.
 
 What it does not mirror: security rules (the rulebase starts empty and you manage it
 through the API), NAT, and anything the node does not have. Switching scenario resets
@@ -280,12 +293,100 @@ documentation gives the command syntax but no output examples. Peer names are `p
 because FRR has no PAN-OS peer names. `bgp summary`, `peer-group`, `policy` and RIB commands
 return an error in mirror mode. See "Check these on a real firewall" in `TRAINING.md`.
 
-## Use it with the campus lab
+## Use it with a lab
 
-The [two-site campus lab](https://github.com/grafman56/containerlab-labs-public/tree/main/evpn-vxlan-campus)
-publishes users and role tags to this emulator and checks them. Start the
-emulator in mirror mode (see above), then follow the campus README. Its
-demo script expects the emulator on `127.0.0.1:8080`.
+The emulator is the management side of a firewall. Your lab supplies the rest: a
+network, and a node that forwards packets. Connecting them is three jobs, and a
+fourth if you want rules to change real traffic.
+
+| Job | What it means | Required |
+|---|---|---|
+| 1. Show the lab's firewall | The API reports your firewall's ports and zones | Yes |
+| 2. Say who is where | Send User-ID logins and tags from your lab | Yes |
+| 3. Write rules and test them | Set, commit, and ask which rule matches | Yes |
+| 4. Make the lab obey | Copy the committed rules into the node that forwards packets | No |
+
+### 1. Run it beside the lab, and choose what it shows
+
+Run the emulator on the same host as the lab. It listens on port 8080. Check it:
+
+```sh
+curl -s http://127.0.0.1:8080/health
+```
+
+Pick one way to start it:
+
+| Way | Command | Use it when | It needs |
+|---|---|---|---|
+| Sample data | `python3 panos_emulator.py` | You only want the API | Nothing |
+| Lab fixture | `PANOS_DATA=data/srlinux-lab.json python3 panos_emulator.py` | A fixture file matches your lab | Nothing. The values are fixed |
+| Mirror | `PANOS_LAB_FW=<container> PANOS_LAB_HOSTNAME=fw python3 panos_emulator.py` | You want live ports, routes and BGP | Docker access, and a firewall node as described in [Mirror a lab firewall](#mirror-a-lab-firewall) |
+
+**For a new lab, start with a fixture.** It is the easiest. Copy
+`data/srlinux-lab.json` to `data/my-lab.json` and change these values:
+
+- `system.hostname`: the firewall's name.
+- `interfaces`: one entry per firewall port, with its `ip`, its `zone` and a `link` note.
+- `running_config.zones`: the list of zone names. Every `zone` in `interfaces` should be in this list.
+
+Start it with `PANOS_DATA=data/my-lab.json python3 panos_emulator.py`.
+
+### 2. Say who is where (User-ID)
+
+Your lab knows which host has which address and which user is on it. Send that to
+the emulator in one request. This logs in a user and tags the address:
+
+```sh
+curl -s -X POST http://127.0.0.1:8080/api \
+  --data-urlencode type=user-id \
+  --data-urlencode 'cmd=<uid-message><version>2.0</version><type>update</type><payload>
+    <login><entry name="alice@lab.local" ip="10.10.10.21"/></login>
+    <register><entry ip="10.10.10.21"><tag><member>vni:1010</member></tag></entry></register>
+  </payload></uid-message>'
+```
+
+Do this from a script that reads your lab, so the answers stay true when the lab
+changes. Working examples to copy:
+
+- `publish.py` in the SR Linux lab reads each host's address and VLAN from the switches and sends a login plus tags.
+- `reconcile/publish.py` in the campus lab does the same from its access-control sessions.
+
+A login expires after 45 minutes. Run your script again to refresh it.
+
+### 3. Write a rule and test it
+
+Follow [Change configuration, then commit](#change-configuration-then-commit)
+and the [User-ID](#user-id) section. In short: `set` the rule, `commit`, then ask
+`security-policy-match`. Zone names in the rule must be zone names the emulator
+knows (job 1).
+
+### 4. Make the lab obey (optional)
+
+The emulator does not move packets, so a rule you commit changes nothing on the
+wire by itself. To change real traffic, keep a node that forwards packets (for
+example Linux with nftables) and copy the committed rules into it.
+`sync-fw.py` in the SR Linux lab does this. It reads the rules, tags and user
+mappings from the API and rewrites one nftables chain. Copy it and change the
+node name and the zone-to-port mapping. The copy goes one way, from the
+emulator to the node, and runs when you run it.
+
+### Labs that already use it
+
+Both are in the `containerlab-labs-public` repository.
+
+| Lab folder | Start the emulator with | What it shows |
+|---|---|---|
+| `evpn-vxlan-srlinux` | Fixture or mirror | A VLAN to VNI mapping, tags that carry the VNI, a rule written in the API that changes traffic. Start here |
+| `evpn-vxlan-campus` | Mirror | Users from an access-control system published to the firewall, and a check that the two agree. It expects the emulator on `127.0.0.1:8080` |
+
+### Mistakes to avoid
+
+- **Port 8080 is taken.** Another emulator may already run on the host. Use it, or set `PANOS_PORT`.
+- **A rule never matches.** The zone in the rule is not a zone the emulator knows. List them with the `show interface` query.
+- **A tag rule matches nobody.** The login or tag expired, or was never sent. Run your publish script again.
+- **Two tenants share an address.** Use one vsys per tenant (`PANOS_VSYS=vsys1,vsys2`) and send `vsys=` with each request.
+- **The API is open.** It has no login by default. Set `PANOS_API_KEY` on a shared network.
+- **A tag matches a rule directly.** A real firewall matches an address object or a dynamic address group that holds the tag. See `TRAINING.md`.
 
 ## Tests
 
@@ -336,7 +437,8 @@ deploy fails because the port is taken.
 |---|---|
 | `panos_emulator.py` | The whole server |
 | `lab_snapshot.py` | Reads a lab firewall node for mirror mode |
-| `data/default.json` | Starting device state |
+| `data/default.json` | Starting device state (sample data) |
+| `data/srlinux-lab.json` | Starting state that matches the SR Linux lab firewall. Copy it to make a fixture for your own lab |
 | `scenarios/*.json` | Device conditions you can switch to |
 | `ARCHITECTURE.md` | How state and responses are built |
 | `TRAINING.md` | Exercises and the fidelity notes |
