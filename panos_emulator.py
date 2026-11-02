@@ -42,10 +42,50 @@ def switch_scenario(path):
     state.clear()
     state.update(merged)
     jobs.clear()
+    apply_lab_baseline()
 
 
 state = load(DATA)
 state.setdefault("candidate_config", deepcopy(state.get("running_config", {})))
+
+# Lab mirror: PANOS_LAB_FW names a running Containerlab firewall node. Its
+# interfaces, zones, routes, BGP peers and session count replace the sample
+# data. See lab_snapshot.py.
+LAB_FW = os.getenv("PANOS_LAB_FW", "")
+LAB_REFRESH_SECONDS = 3
+_lab = {"at": 0.0, "failed": False}
+
+
+def refresh_lab(force=False):
+    """Copy the firewall node's live state into `state`. Keep the last copy on failure."""
+    if not LAB_FW or (not force and time.monotonic() - _lab["at"] < LAB_REFRESH_SECONDS):
+        return
+    _lab["at"] = time.monotonic()
+    try:
+        import lab_snapshot
+        snap = lab_snapshot.snapshot(LAB_FW)
+    except Exception as exc:  # docker missing, node down: serve the last good copy
+        if not _lab["failed"]:
+            print(f"lab mirror: cannot read {LAB_FW}: {exc}", flush=True)
+        _lab["failed"] = True
+        return
+    _lab["failed"] = False
+    zones = snap.pop("zones")
+    state.update(snap)
+    state["system"] = {**state["system"], "hostname": os.getenv("PANOS_LAB_HOSTNAME", LAB_FW)}
+    state["ha"] = {"enabled": "no"}
+    return zones
+
+
+def apply_lab_baseline():
+    """Start the configuration from the node's zones, with no rules."""
+    zones = refresh_lab(force=True)
+    if zones is not None:
+        state["running_config"] = {"zones": zones, "security-rules": []}
+        state["candidate_config"] = deepcopy(state["running_config"])
+
+
+apply_lab_baseline()
 jobs = {}
 next_job = 1
 LOCK = threading.Lock()
@@ -513,14 +553,24 @@ def route_entries():
 
 
 def bgp_entries():
-    """BGP state, or an empty branch when no BGP is configured.
+    """Peers as `show routing protocol bgp peer` returns them.
 
-    The lab configures no BGP yet, so this is empty rather than a copy of the
-    static route table. See TRAINING.md.
+    Real PAN-OS lists `<entry peer="name" vr="default">` with the session state.
+    Without a lab mirror no BGP is configured, so the answer is an empty branch.
+    The element names are from the author's memory: check them on a real
+    firewall (TRAINING.md). The peer name here is `peer-<address>`.
     """
-    if not state.get("bgp"):
+    bgp = state.get("bgp")
+    if not bgp:
         return Element("bgp")
-    return value_element("bgp", state["bgp"])
+    root = Element("bgp")
+    for vr, data in sorted(bgp.items()):
+        for peer in data.get("peers", []):
+            entry = SubElement(root, "entry", {"peer": f"peer-{peer['peer-address']}", "vr": vr})
+            for key, value in (("local-as", data.get("local-as")), ("router-id", data.get("router-id")), *peer.items()):
+                if value is not None:
+                    text_node(entry, key, value)
+    return root
 
 
 def session_entries():
@@ -704,6 +754,8 @@ document.querySelector('#scenarios').innerHTML=['healthy','ha-out-of-sync','tunn
             if "registered-ip" in cmd:
                 vsys, failure = vsys_or_error(query)
                 return failure or xml_response(userid_registered(vsys))
+            if any(w in cmd for w in ("bgp", "session", "interface", "route", "routing")):
+                refresh_lab()
             if "high-availability" in cmd:
                 return xml_response(value_element("high-availability", state.get("ha", {})))
             if "bgp" in cmd:

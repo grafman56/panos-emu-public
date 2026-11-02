@@ -69,6 +69,8 @@ form, and one button per scenario.
 | `PANOS_DATA` | `data/default.json` | Initial device state |
 | `PANOS_VSYS` | `vsys1` | Comma separated vsys list, for a second tenant |
 | `PANOS_API_KEY` | empty | Set it to require the `X-PAN-KEY` header |
+| `PANOS_LAB_FW` | empty | Container name of a lab firewall to mirror |
+| `PANOS_LAB_HOSTNAME` | the container name | Hostname to report in mirror mode |
 
 Authentication is off by default, so a lab needs no keys.
 
@@ -228,11 +230,46 @@ healthy  ha-out-of-sync  tunnel-down  license-expiring  high-sessions  commit-fa
 Add a file to `scenarios/` to create another condition. Point `PANOS_DATA` at a
 different fixture to change the starting state.
 
+## Mirror a lab firewall
+
+By default the emulator shows sample data. To make it show a real Containerlab
+firewall instead, point it at that node:
+
+```sh
+PANOS_LAB_FW=clab-evpn-vxlan-campus-fw-a PANOS_LAB_HOSTNAME=fw-a python3 panos_emulator.py
+```
+
+It then reads the node every few seconds and shows what the node has:
+
+| You ask for | You get |
+|---|---|
+| `show interface` | The node's ports as `ethernet1/N`, with address, zone and virtual router |
+| `show routing route` | The node's routes, one virtual router per VRF, with `A C`, `A O` or `A B` flags |
+| `show routing protocol bgp peer` | Each BGP session, with its state, AS number and prefix counts |
+| `show session` | The node's connection count |
+| Zones in the configuration | The zones in the node's `zones` nftables table |
+
+If you shut a BGP session on the node, the peer shows `Idle` within a few seconds.
+If the node is down, the emulator keeps the last copy and prints one warning.
+
+What you need:
+
+- The `docker` command, and permission to use it, on the machine that runs the emulator.
+- A node that runs FRR and keeps its zones in an nftables table named `zones`, with one
+  set per zone called `<zone>_ifaces`. The campus lab firewalls do.
+
+What it does not mirror: security rules (the rulebase starts empty and you manage it
+through the API), NAT, and anything the node does not have. Switching scenario resets
+the configuration to the node's zones with no rules.
+
+The BGP element names and the `A B` route flags come from memory of real PAN-OS output.
+See "Check these on a real firewall" in `TRAINING.md`.
+
 ## Use it with the campus lab
 
 The [two-site campus lab](https://github.com/grafman56/containerlab-labs-public/tree/main/evpn-vxlan-campus)
 publishes users and role tags to this emulator and checks them. Start the
-emulator with `python3 panos_emulator.py`, then follow the campus README. Its
+emulator in mirror mode (see above), then follow the campus README. Its
 demo script expects the emulator on `127.0.0.1:8080`.
 
 ## Tests
@@ -283,6 +320,7 @@ deploy fails because the port is taken.
 | File | Contents |
 |---|---|
 | `panos_emulator.py` | The whole server |
+| `lab_snapshot.py` | Reads a lab firewall node for mirror mode |
 | `data/default.json` | Starting device state |
 | `scenarios/*.json` | Device conditions you can switch to |
 | `ARCHITECTURE.md` | How state and responses are built |
