@@ -552,7 +552,7 @@ def route_entries():
     return root
 
 
-def bgp_entries():
+def bgp_entries(cmd=""):
     """Peers as `show routing protocol bgp peer` returns them.
 
     Real PAN-OS lists `<entry peer="name" vr="default">` with the session state.
@@ -563,10 +563,19 @@ def bgp_entries():
     bgp = state.get("bgp")
     if not bgp:
         return Element("bgp")
+    # The CLI reference gives `show routing protocol bgp peer peer-name <n>
+    # virtual-router <vr>`. PAN-OS XML nests each CLI word as an element.
+    want_vr = re.search(r"<virtual-router>([^<]+)</virtual-router>", cmd)
+    want_peer = re.search(r"<peer-name>([^<]+)</peer-name>", cmd)
     root = Element("bgp")
     for vr, data in sorted(bgp.items()):
+        if want_vr and want_vr.group(1) != vr:
+            continue
         for peer in data.get("peers", []):
-            entry = SubElement(root, "entry", {"peer": f"peer-{peer['peer-address']}", "vr": vr})
+            name = f"peer-{peer['peer-address']}"
+            if want_peer and want_peer.group(1) != name:
+                continue
+            entry = SubElement(root, "entry", {"peer": name, "vr": vr})
             for key, value in (("local-as", data.get("local-as")), ("router-id", data.get("router-id")), *peer.items()):
                 if value is not None:
                     text_node(entry, key, value)
@@ -759,7 +768,9 @@ document.querySelector('#scenarios').innerHTML=['healthy','ha-out-of-sync','tunn
             if "high-availability" in cmd:
                 return xml_response(value_element("high-availability", state.get("ha", {})))
             if "bgp" in cmd:
-                return xml_response(bgp_entries())
+                if state.get("bgp") and re.search(r"<(summary|peer-group|policy|loc-rib|rib-out|loc-rib-detail|rib-out-detail)\b", cmd):
+                    return error(1, "this BGP command is not modeled")
+                return xml_response(bgp_entries(cmd))
             if "vpn" in cmd:
                 return xml_response(vpn_entries())
             if "session" in cmd:

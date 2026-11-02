@@ -75,3 +75,17 @@ def test_a_scenario_keeps_published_user_id():
     finally:
         emulator.state.clear()
         emulator.state.update(saved)
+
+
+def test_bgp_peer_filters():
+    e = emulator
+    e.state["bgp"] = {"default": {"local-as": 65301, "peers": [{"peer-address": "10.0.0.1", "status": "Established"}]},
+                      "guest": {"local-as": 65301, "peers": [{"peer-address": "10.0.1.1", "status": "Idle"}]}}
+    try:
+        count = lambda cmd: e.bgp_entries(cmd).__len__()
+        assert count("") == 2
+        assert count("<virtual-router>guest</virtual-router>") == 1
+        assert count("<peer-name>peer-10.0.0.1</peer-name><virtual-router>default</virtual-router>") == 1
+        assert count("<peer-name>peer-10.0.0.1</peer-name><virtual-router>guest</virtual-router>") == 0
+    finally:
+        e.state.pop("bgp")

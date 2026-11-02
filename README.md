@@ -245,7 +245,7 @@ It then reads the node every few seconds and shows what the node has:
 |---|---|
 | `show interface` | The node's ports as `ethernet1/N`, with address, zone and virtual router |
 | `show routing route` | The node's routes, one virtual router per VRF, with `A C`, `A O` or `A B` flags |
-| `show routing protocol bgp peer` | Each BGP session, with its state, AS number and prefix counts |
+| `show routing protocol bgp peer` | Each BGP session, with its state, AS number and prefix counts. It accepts `peer-name` and `virtual-router`, as in the CLI reference |
 | `show session` | The node's connection count |
 | Zones in the configuration | The zones in the node's `zones` nftables table |
 
@@ -262,8 +262,10 @@ What it does not mirror: security rules (the rulebase starts empty and you manag
 through the API), NAT, and anything the node does not have. Switching scenario resets
 the configuration to the node's zones with no rules.
 
-The BGP element names and the `A B` route flags come from memory of real PAN-OS output.
-See "Check these on a real firewall" in `TRAINING.md`.
+The BGP, route and interface output is not checked against a real firewall. The bundled
+documentation gives the command syntax but no output examples. Peer names are `peer-<address>`
+because FRR has no PAN-OS peer names. `bgp summary`, `peer-group`, `policy` and RIB commands
+return an error in mirror mode. See "Check these on a real firewall" in `TRAINING.md`.
 
 ## Use it with the campus lab
 
