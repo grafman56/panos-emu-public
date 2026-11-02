@@ -408,7 +408,7 @@ def userid_apply(cmd, vsys=None):
     All or nothing: every entry is checked before anything changes, so a bad
     entry never leaves the tables half updated."""
     try:
-        name = check_vsys(vsys)
+        vsys_name = check_vsys(vsys)
     except ValueError as bad:
         return False, str(bad)
     try:
@@ -446,8 +446,8 @@ def userid_apply(cmd, vsys=None):
         return False, "invalid entry: %s" % error
     now = time.time()
     userid_expire(now)  # sweep before validating, so an expired mapping is gone
-    logins_t, tags_t = userid_tables(name)
-    utags = user_tags(name)
+    logins_t, tags_t = userid_tables(vsys_name)
+    utags = user_tags(vsys_name)
     mapped = {e["user"] for e in logins_t.values()} | {n for n, _, _ in logins}
     # A user tag needs an existing user mapping, as on a real firewall.
     for user, _ in user_registers:
@@ -479,7 +479,7 @@ def userid_apply(cmd, vsys=None):
         else:
             tags_t.pop(ip, None)
     userid_expire(now)
-    return True, "User-ID update applied to %s" % name
+    return True, "User-ID update applied to %s" % vsys_name
 
 
 def text_node(parent, name, value):

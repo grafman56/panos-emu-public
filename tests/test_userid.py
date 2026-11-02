@@ -110,3 +110,8 @@ def test_keygen_works_without_a_key_when_auth_is_on(base_url):
     assert post(base_url, type="keygen", user="a", password="b").find("result/key").text == "s3cret"
     with pytest.raises(urllib.error.HTTPError):
         urllib.request.urlopen(base_url + "/api?type=op&cmd=" + urllib.parse.quote(SHOW_MAP))
+
+
+def test_reply_names_the_vsys_not_a_tag():
+    ok, msg = emulator.userid_apply(uid('<register><entry ip="10.0.0.7"><tag><member>vni:1010</member></tag></entry></register>'))
+    assert ok and msg == "User-ID update applied to vsys1"
