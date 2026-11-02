@@ -1,0 +1,107 @@
+{
+  "system": {
+    "hostname": "fw",
+    "serial": "007000000001",
+    "model": "PA-VM",
+    "sw-version": "11.1.0",
+    "app-version": "8890-9000",
+    "threat-version": "9000-9100"
+  },
+  "ha": {
+    "enabled": "no"
+  },
+  "interfaces": {
+    "ethernet1/1": {
+      "state": "up",
+      "virtual-router": "default",
+      "ip": "10.0.0.10/31",
+      "zone": "tenant",
+      "link": "l2 e1-5"
+    },
+    "ethernet1/2": {
+      "state": "up",
+      "virtual-router": "default",
+      "ip": "10.0.0.12/31",
+      "zone": "guest",
+      "link": "l2 e1-6"
+    }
+  },
+  "virtual-routers": {
+    "default": {
+      "routes": [
+        {
+          "destination": "10.0.0.10/31",
+          "interface": "ethernet1/1",
+          "flags": "A C",
+          "metric": 0
+        },
+        {
+          "destination": "10.0.0.12/31",
+          "interface": "ethernet1/2",
+          "flags": "A C",
+          "metric": 0
+        }
+      ]
+    }
+  },
+  "addresses": [],
+  "services": [],
+  "nat-rules": [],
+  "licenses": {
+    "threat-prevention": {
+      "status": "active",
+      "days-remaining": 365
+    },
+    "wildfire": {
+      "status": "active",
+      "days-remaining": 365
+    }
+  },
+  "vpn": [],
+  "sessions": {
+    "active": 0,
+    "maximum": 10000,
+    "utilization": 0.0
+  },
+  "logs": [],
+  "user-id": [],
+  "running_config": {
+    "zones": [
+      "tenant",
+      "guest"
+    ],
+    "security-rules": []
+  },
+  "candidate_changes": [],
+  "commit": {
+    "result": "OK"
+  },
+  "bgp": {
+    "default": {
+      "router-id": "10.255.0.31",
+      "local-as": 65100,
+      "peers": [
+        {
+          "peer-address": "10.0.0.11",
+          "remote-as": 65000,
+          "status": "Established",
+          "status-duration": 3600,
+          "msg-total-in": 0,
+          "msg-total-out": 0,
+          "prefixes-received": 0,
+          "prefixes-sent": 0
+        },
+        {
+          "peer-address": "10.0.0.13",
+          "remote-as": 65000,
+          "status": "Established",
+          "status-duration": 3600,
+          "msg-total-in": 0,
+          "msg-total-out": 0,
+          "prefixes-received": 0,
+          "prefixes-sent": 0
+        }
+      ]
+    }
+  }
+}

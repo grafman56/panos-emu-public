@@ -230,6 +230,19 @@ healthy  ha-out-of-sync  tunnel-down  license-expiring  high-sessions  commit-fa
 Add a file to `scenarios/` to create another condition. Point `PANOS_DATA` at a
 different fixture to change the starting state.
 
+## Start with a lab's firewall data
+
+`data/srlinux-lab.json` matches the firewall in the SR Linux EVPN lab: hostname `fw`,
+zones `tenant` and `guest`, two interfaces, and two BGP peers (AS 65100 to AS 65000). It needs
+no Docker and no running lab:
+
+```sh
+PANOS_DATA=data/srlinux-lab.json python3 panos_emulator.py
+```
+
+The values are fixed. BGP always shows `Established`. To follow a running lab instead, use
+mirror mode below.
+
 ## Mirror a lab firewall
 
 By default the emulator shows sample data. To make it show a real Containerlab
